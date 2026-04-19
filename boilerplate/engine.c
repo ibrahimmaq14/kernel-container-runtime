@@ -596,6 +596,11 @@ static int child_fn(void *arg)
 {
     child_config_t *cfg = arg;
     size_t host_len;
+    char local_id[CONTAINER_ID_LEN];
+    char local_rootfs[PATH_MAX];
+    char local_command[CHILD_COMMAND_LEN];
+    int local_nice;
+    int local_log_fd;
 
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
@@ -604,26 +609,39 @@ static int child_fn(void *arg)
     if (setpriority(PRIO_PROCESS, 0, cfg->nice_value) < 0)
         perror("setpriority");
 
-    if (dup2(cfg->log_write_fd, STDOUT_FILENO) < 0) {
+    /* Copy config into local storage and free the heap allocation so the
+     * parent may safely release it. */
+    strncpy(local_id, cfg->id, sizeof(local_id) - 1);
+    local_id[sizeof(local_id) - 1] = '\0';
+    strncpy(local_rootfs, cfg->rootfs, sizeof(local_rootfs) - 1);
+    local_rootfs[sizeof(local_rootfs) - 1] = '\0';
+    strncpy(local_command, cfg->command, sizeof(local_command) - 1);
+    local_command[sizeof(local_command) - 1] = '\0';
+    local_nice = cfg->nice_value;
+    local_log_fd = cfg->log_write_fd;
+
+    free(cfg);
+
+    if (dup2(local_log_fd, STDOUT_FILENO) < 0) {
         perror("dup2 stdout");
         return 1;
     }
 
-    if (dup2(cfg->log_write_fd, STDERR_FILENO) < 0) {
+    if (dup2(local_log_fd, STDERR_FILENO) < 0) {
         perror("dup2 stderr");
         return 1;
     }
 
-    close(cfg->log_write_fd);
+    close(local_log_fd);
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0)
         perror("mount private");
 
-    host_len = strnlen(cfg->id, sizeof(cfg->id));
-    if (host_len > 0 && sethostname(cfg->id, host_len) < 0)
+    host_len = strnlen(local_id, sizeof(local_id));
+    if (host_len > 0 && sethostname(local_id, host_len) < 0)
         perror("sethostname");
 
-    if (chdir(cfg->rootfs) < 0) {
+    if (chdir(local_rootfs) < 0) {
         perror("chdir rootfs");
         return 1;
     }
@@ -648,7 +666,7 @@ static int child_fn(void *arg)
         return 1;
     }
 
-    execl("/bin/sh", "/bin/sh", "-c", cfg->command, (char *)NULL);
+    execl("/bin/sh", "/bin/sh", "-c", local_command, (char *)NULL);
     perror("execl");
     return 1;
 }
@@ -885,7 +903,8 @@ static int launch_container(supervisor_ctx_t *ctx,
                  record->hard_limit_bytes >> 20,
                  record->nice_value);
 
-    free(child_cfg);
+    /* child_cfg memory is freed by the child after copying needed fields.
+     * Do not free it here to avoid double-free/race with the child. */
     *out_record = record;
     return 0;
 

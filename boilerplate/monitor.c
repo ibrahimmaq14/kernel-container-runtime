@@ -13,6 +13,9 @@
 #include <linux/timer.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+//#include <linux/timer.h>
+//#include <linux/timer_list.h>
+#include <linux/init.h>
 
 #include "monitor_ioctl.h"
 
@@ -93,13 +96,22 @@ static void timer_callback(struct timer_list *t)
 {
     struct monitored_entry *entry;
     struct monitored_entry *tmp;
+    LIST_HEAD(check_list);
     LIST_HEAD(exited_list);
     LIST_HEAD(killed_list);
     LIST_HEAD(soft_warn_list);
     unsigned long flags;
 
+    /* Move all entries to a temporary list while holding the lock,
+     * then evaluate each entry outside the spinlock to avoid calling
+     * helpers that may sleep while the spinlock is held. */
     spin_lock_irqsave(&monitored_lock, flags);
     list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
+        list_move_tail(&entry->list, &check_list);
+    }
+    spin_unlock_irqrestore(&monitored_lock, flags);
+
+    list_for_each_entry_safe(entry, tmp, &check_list, list) {
         long rss_bytes = get_rss_bytes(entry->pid);
 
         if (rss_bytes < 0) {
@@ -116,10 +128,16 @@ static void timer_callback(struct timer_list *t)
             rss_bytes > (long)entry->soft_limit_bytes) {
             entry->soft_limit_emitted = true;
             list_move_tail(&entry->list, &soft_warn_list);
+            continue;
         }
-    }
-    spin_unlock_irqrestore(&monitored_lock, flags);
 
+        /* Stays monitored: move back to monitored_list */
+        spin_lock_irqsave(&monitored_lock, flags);
+        list_move_tail(&entry->list, &monitored_list);
+        spin_unlock_irqrestore(&monitored_lock, flags);
+    }
+
+    /* Handle soft warnings: log outside the lock, then move back. */
     list_for_each_entry_safe(entry, tmp, &soft_warn_list, list) {
         long rss_bytes = get_rss_bytes(entry->pid);
 
@@ -134,6 +152,7 @@ static void timer_callback(struct timer_list *t)
         spin_unlock_irqrestore(&monitored_lock, flags);
     }
 
+    /* Handle killed entries: signal them and free the struct. */
     list_for_each_entry_safe(entry, tmp, &killed_list, list) {
         long rss_bytes = get_rss_bytes(entry->pid);
 
@@ -145,6 +164,7 @@ static void timer_callback(struct timer_list *t)
         kfree(entry);
     }
 
+    /* Free exited entries. */
     list_for_each_entry_safe(entry, tmp, &exited_list, list)
         kfree(entry);
 
@@ -268,7 +288,7 @@ static void __exit monitor_exit(void)
     struct monitored_entry *tmp;
     unsigned long flags;
 
-    del_timer_sync(&monitor_timer);
+    timer_shutdown_sync(&monitor_timer);
 
     spin_lock_irqsave(&monitored_lock, flags);
     list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
