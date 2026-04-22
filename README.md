@@ -2,17 +2,21 @@
 
 ## 📌 Overview
 
-This project implements a lightweight Linux container runtime in C
-with: - A supervisor (`engine`) - A kernel module (`monitor.ko`) -
-Multi-container support, logging, and memory limits
+This project implements a lightweight Linux container runtime in C  
+with:  
+- A supervisor (`engine`)  
+- A kernel module (`monitor.ko`)  
+- Multi-container support, logging, and memory limits  
+- IPC-based CLI communication  
+- Scheduler experimentation using nice values  
 
 ------------------------------------------------------------------------
 
 ## ⚙️ System Requirements
 
--   Linux (Arch / Ubuntu)
--   GCC, Make
--   Kernel headers installed
+- Linux (Arch / Ubuntu)  
+- GCC, Make  
+- Kernel headers installed  
 
 Check:
 
@@ -75,6 +79,71 @@ Check:
 
 ------------------------------------------------------------------------
 
+## 🔗 IPC & CLI Demonstration (Task 2)
+
+The CLI communicates with the supervisor using a UNIX domain socket.
+
+### Run CLI commands
+
+    sudo ./engine start ipc1 ./rootfs-alpha "/cpu_hog 30"
+    sudo ./engine start ipc2 ./rootfs-beta "/cpu_hog 30"
+
+### List containers
+
+    sudo ./engine ps
+
+### View logs
+
+    sudo ./engine logs ipc1
+    sudo ./engine logs ipc2
+
+### Run foreground container
+
+    sudo ./engine run ipc3 ./rootfs-alpha /cpu_hog
+
+### Stop containers
+
+    sudo ./engine stop ipc1
+    sudo ./engine stop ipc2
+
+### Verify IPC socket
+
+    ls /tmp/mini_runtime.sock
+
+------------------------------------------------------------------------
+
+## ⚡ Scheduler Experiment (Task 5)
+
+### Run containers with different priorities
+
+    sudo ./engine start high ./rootfs-alpha "/cpu_hog 30" --nice -10
+    sudo ./engine start low ./rootfs-beta "/cpu_hog 30" --nice 10
+
+### Check container status
+
+    sudo ./engine ps
+
+### Compare logs
+
+    sudo ./engine logs high
+    sudo ./engine logs low
+
+### Stronger experiment (CPU contention)
+
+    sudo ./engine start high2 ./rootfs-alpha "/cpu_hog 30" --nice -10
+    sudo ./engine start low1 ./rootfs-beta "/cpu_hog 30" --nice 10
+    sudo ./engine start low2 ./rootfs-beta "/cpu_hog 30" --nice 10
+
+### Stop all scheduler containers
+
+    sudo ./engine stop high
+    sudo ./engine stop low
+    sudo ./engine stop high2
+    sudo ./engine stop low1
+    sudo ./engine stop low2
+
+------------------------------------------------------------------------
+
 ## 📸 Screenshots
 
 ### Screenshot 1: Kernel Module Loaded
@@ -109,11 +178,12 @@ Check:
 
 ## 📊 Observations
 
--   Kernel module creates `/dev/container_monitor`
--   Containers run with memory limits
--   CPU workload executes inside container
--   Logs are generated correctly
--   One container may fail if binary is missing, but runtime works
+- Kernel module creates `/dev/container_monitor`  
+- Containers run with memory limits  
+- CPU workload executes inside container  
+- Logs are generated correctly  
+- IPC works via UNIX domain socket  
+- Scheduler behavior varies with nice values  
 
 ------------------------------------------------------------------------
 
@@ -140,12 +210,16 @@ It means the binary is missing in that container rootfs.
 
 ## ✅ Conclusion
 
-This project demonstrates: - Container creation using namespaces -
-Supervisor-based container management - Kernel-level monitoring -
-Logging and process tracking
+This project demonstrates:  
+- Container creation using namespaces  
+- Supervisor-based container management  
+- Kernel-level monitoring  
+- Logging and process tracking  
+- IPC between CLI and supervisor  
+- Scheduler behavior using priority control  
 
 ------------------------------------------------------------------------
 
 ## 👨‍💻 Author
 
--   Ibrahim Maqsood
+- Ibrahim Maqsood  
